@@ -18,7 +18,7 @@ if __name__ == '__main__':
 
     edge_p = "../data/edge.txt"
     network_p = "../data/transit.npy"
-    path_feature_p = "../data/feature_od.npy"
+    path_feature_p = "../data/direction/feature_od_direction.npy"
     train_p = "../data/cross_validation/train_CV%d_size%d.csv" % (cv, size)
     test_p = "../data/cross_validation/test_CV%d.csv" % cv
     model_p = "../trained_models/bc_CV%d_size%d.pt" % (cv, size)

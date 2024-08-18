@@ -197,7 +197,7 @@ if __name__ == '__main__':
     """environment"""
     edge_p = "../data/base/edge.txt"
     network_p = "../data/base/transit.npy"
-    path_feature_p = "../data/base/feature_od.npy"
+    path_feature_p = "../data/direction/feature_od_direction.npy"
     train_p = "../data/base/cross_validation/train_CV%d_size%d.csv" % (cv, size)
     test_p = "../data/base/cross_validation/test_CV%d.csv" % cv
     model_p = "../trained_models/base/airl_CV%d_size%d.pt" % (cv, size)
@@ -208,6 +208,8 @@ if __name__ == '__main__':
     env = RoadWorld(network_p, edge_p, pre_reset=(od_list, od_dist))
     """load path-level and link-level feature"""
     path_feature, path_max, path_min = load_path_feature(path_feature_p)
+    print("Feature shape:", path_feature.shape)
+
     edge_feature, link_max, link_min = load_link_feature(edge_p)
     path_feature = minmax_normalization(path_feature, path_max, path_min)
     path_feature_pad = np.zeros((env.n_states, env.n_states, path_feature.shape[2]))
