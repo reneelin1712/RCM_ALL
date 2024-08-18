@@ -24,16 +24,31 @@ def load_path_feature(path_feature_path):
 
 
 def load_link_feature(edge_path):
-    edge_df = pd.read_csv(edge_path, usecols=['highway', 'length', 'n_id'], dtype={'highway': str})
-    # if highway is a list, we define it as the first element of the list
+    edge_df = pd.read_csv(edge_path, usecols=['highway', 'length', 'lanes', 'n_id'], dtype={'highway': str, 'lanes': str})
+    
+    # Handle missing or non-numeric lanes
+    edge_df['lanes'] = edge_df['lanes'].apply(lambda x: int(x) if pd.notnull(x) and x.isdigit() else 1)
+    
+    # Convert highway to index
     edge_df['highway'] = edge_df['highway'].apply(lambda loc: (loc.split(',')[0])[2:-1] if ',' in loc else loc)
     level2idx = {'residential': 0, 'primary': 1, 'unclassified': 2, 'tertiary': 3, 'living_street': 4, 'secondary': 5}
-    edge_df['highway_idx'] = edge_df['highway'].apply(lambda loc: level2idx.get(loc,2))
+    edge_df['highway_idx'] = edge_df['highway'].apply(lambda loc: level2idx.get(loc, 2))
+    
+    # Create one-hot encoding for highway
     highway_idx = np.eye(6)[edge_df['highway_idx'].values]
-    edge_feature = np.concatenate([np.expand_dims(edge_df['length'].values, 1), highway_idx], 1)
+    
+    # Combine length, lanes, and highway features
+    edge_feature = np.concatenate([
+        np.expand_dims(edge_df['length'].values, 1),
+        np.expand_dims(edge_df['lanes'].values, 1),
+        highway_idx
+    ], 1)
+    
+    # Normalize features
     edge_feature_max, edge_feature_min = np.max(edge_feature, 0), np.min(edge_feature, 0)
     print('edge_feature', edge_feature.shape)
     return edge_feature, edge_feature_max, edge_feature_min
+
 
 
 def minmax_normalization(feature, xmax, xmin):
