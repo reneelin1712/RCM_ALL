@@ -67,9 +67,20 @@ class PolicyCNN(nn.Module):
         x = x.masked_fill((1 - x_mask).bool(), -1e32)
         return F.log_softmax(x, dim=1)
 
-    def select_action(self, state, des):
+    # def select_action(self, state, des):
+    #     action_prob = self.get_action_prob(state, des)
+    #     action = torch.distributions.Categorical(action_prob).sample()
+    #     return action
+    
+    # # Modify the PolicyCNN class to detect NaNs in action probabilities
+    def select_action(self, state, des, mean_action=False):
         action_prob = self.get_action_prob(state, des)
-        action = torch.distributions.Categorical(action_prob).sample()
+        if torch.isnan(action_prob).any():
+            raise ValueError("NaNs detected in action_prob during action selection.")
+        if mean_action:
+            action = action_prob.max(1, keepdim=True)[1]
+        else:
+            action = torch.distributions.Categorical(action_prob).sample()
         return action
 
     def get_kl(self, state, des):

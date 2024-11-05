@@ -149,30 +149,33 @@ def main_loop():
                 'Best Edit Distance': best_edit
             })
 
-            # Optionally log gradients and weights
+            # Log gradients and weights with NaN/Inf checks
+            def safe_log_histogram(name, data):
+                if np.isfinite(data).all():  # Check if all values are finite
+                    wandb.log({name: wandb.Histogram(data)})
+
+            # Log policy_net weights and gradients
             for name, param in policy_net.named_parameters():
-                # Detach and move to CPU before converting to NumPy
                 param_data = param.detach().cpu().numpy()
-                wandb.log({f'Policy Weights/{name}': wandb.Histogram(param_data)})
+                safe_log_histogram(f'Policy Weights/{name}', param_data)
                 if param.grad is not None:
                     grad_data = param.grad.detach().cpu().numpy()
-                    wandb.log({f'Policy Gradients/{name}': wandb.Histogram(grad_data)})
+                    safe_log_histogram(f'Policy Gradients/{name}', grad_data)
 
             # Repeat the same for value_net and discrim_net
             for name, param in value_net.named_parameters():
                 param_data = param.detach().cpu().numpy()
-                wandb.log({f'Value Weights/{name}': wandb.Histogram(param_data)})
+                safe_log_histogram(f'Value Weights/{name}', param_data)
                 if param.grad is not None:
                     grad_data = param.grad.detach().cpu().numpy()
-                    wandb.log({f'Value Gradients/{name}': wandb.Histogram(grad_data)})
+                    safe_log_histogram(f'Value Gradients/{name}', grad_data)
 
             for name, param in discrim_net.named_parameters():
                 param_data = param.detach().cpu().numpy()
-                wandb.log({f'Discriminator Weights/{name}': wandb.Histogram(param_data)})
+                safe_log_histogram(f'Discriminator Weights/{name}', param_data)
                 if param.grad is not None:
                     grad_data = param.grad.detach().cpu().numpy()
-                    wandb.log({f'Discriminator Gradients/{name}': wandb.Histogram(grad_data)})
-
+                    safe_log_histogram(f'Discriminator Gradients/{name}', grad_data)
 
 def hard_update(target, source):
     """
@@ -202,7 +205,7 @@ if __name__ == '__main__':
     max_grad_norm = 10  # max grad norm for ppo updates
     seed = 1  # random seed for parameter initialization
     epoch_disc = 1  # optimization epoch number for discriminator
-    optim_epochs = 10  # optimization epoch number for PPO
+    optim_epochs = 20  # optimization epoch number for PPO
     optim_batch_size = 64  # optimization batch size for PPO
     cv = 0  # cross validation process [0, 1, 2, 3, 4]
     size = 10000  # size of training data [100, 1000, 10000]

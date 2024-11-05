@@ -7,3 +7,7 @@ __pycache__/
 
 /src/rcmenv
 /src/wandb
+/src/output_img
+/src/output_img_bc
+/src/attributions
+
