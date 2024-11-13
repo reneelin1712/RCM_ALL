@@ -22,7 +22,7 @@ from model.value import ValueCNN
 from model.discriminator import DiscriminatorAIRLCNN
 
 def load_model(model_path, device, env, path_feature_pad, edge_feature_pad):
-    gamma = 0.99  # discount factor
+    gamma = 0.95  # discount factor
     policy_net = PolicyCNN(
         env.n_actions,
         env.policy_mask,
@@ -106,7 +106,8 @@ def interpret_model():
     ]
 
     # Path settings (adjust paths as necessary)
-    model_path = "../trained_models/base/airl_CV0_size10000.pt"
+    # model_path = "../trained_models/base/airl_CV0_size10000.pt"
+    model_path = "../trained_models/base/bleu90.pt"
     edge_p = "../data/base/edge.txt"
     network_p = "../data/base/transit.npy"
     path_feature_p = "../data/base/feature_od.npy"
@@ -136,7 +137,11 @@ def interpret_model():
     # test_trajs, test_od = load_test_traj(test_p)
 
     # Manually set the trajectory
-    manual_traj_str = "231_230_408_419_76_271_388_311_31_267_56_34_36_374_241_129"
+    # manual_traj_str = "231_230_408_419_76_271_388_311_31_267_56_34_36_374_241_129"
+    # 124_11_125_127_61_325_28_367_286_312_48_316_317_324_341_342_71_345_282_78_231
+    manual_traj_str = "390_400_405_172_356_362_193_185_177_404_194_173_142_144_146"
+    #"124_11_125_127_61_325_28_367_286_312_48_316_317_324_341_342_71_345_282_78_231"
+    #"405_172_356_362_193_185_177_404_194_173_143_167_407_157_159_169"#"231_230_408_419_75_78"
     manual_traj = manual_traj_str.split('_')  # This will create a list of node IDs as strings
     # Replace test_trajs with the manual trajectory
     test_trajs = [manual_traj]
@@ -145,7 +150,7 @@ def interpret_model():
     states_list, destination = prepare_input_data(env, test_trajs)
 
     # Ensure output directories exist
-    output_dir = 'output_img'
+    output_dir = 'output_img_20241106'
     os.makedirs(output_dir, exist_ok=True)
 
     # Initialize lists to store attributions and importance scores

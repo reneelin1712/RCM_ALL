@@ -254,10 +254,17 @@ if __name__ == '__main__':
     print('train time', time.time() - start_time)
     """Evaluate model"""
     load_model(model_p)
+
+    """Evaluate model on Training Data"""
+    train_trajs, train_od = load_train_sample(train_p)
+    print('Evaluating on Training Data...')
+    evaluate_model(train_od, train_trajs, policy_net, env)
+
     test_trajs, test_od = load_test_traj(test_p)
     start_time = time.time()
     evaluate_model(test_od, test_trajs, policy_net, env)
     print('test time', time.time() - start_time)
+    
     """Evaluate log prob"""
     test_trajs = env.import_demonstrations_step(test_p)
     evaluate_log_prob(test_trajs, policy_net)

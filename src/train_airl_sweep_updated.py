@@ -19,6 +19,7 @@ from utils.evaluation import (
     evaluate_model,
     evaluate_log_prob,
     evaluate_train_edit_dist,
+    evaluate_diversity_metrics_single
 )
 from utils.load_data import (
     ini_od_dist,
@@ -216,7 +217,7 @@ def load_model(model_path):
         print(f"An error occurred while loading the model: {e}")
 
 def train():
-    wandb.init(project='RCM-AIRL', entity='reneelin2024',resume='allow')
+    wandb.init(project='RCM-AIRL-diverse', entity='reneelin2024',resume='allow')
     config = wandb.config
 
     global policy_net, value_net, discrim_net
@@ -383,11 +384,28 @@ def train():
                         test_od, mean_action=True
                     )
                     edit_dist = evaluate_train_edit_dist(test_trajs, learner_trajs)
+
+                    # # Compute conditional entropy
+                    # learner_diversity_results = evaluate_diversity_metrics_single(learner_trajs, label='Learner')
+                    # #conditional_entropy = learner_diversity_results['Average Conditional Entropy']
+                    # transition_entropy = learner_diversity_results['Average Transition Entropy']
+
+                    # Compute diversity metrics including n-gram transition entropy
+                    n = 3  # Set n to the desired n-gram size
+                    learner_diversity_results = evaluate_diversity_metrics_single(learner_trajs, label='Learner', n=n)
+                    ngram_transition_entropy = learner_diversity_results[f'Average {n}-gram Transition Entropy']
+
+
+                    # Compute the composite score
+                    lambda_entropy = 0.5  # Adjust this weighting factor as needed
+                    # score = edit_dist - lambda_entropy * transition_entropy
+                    score = edit_dist - lambda_entropy * ngram_transition_entropy
+
                 except Exception as e:
                     print(f"An error occurred during evaluation at iteration {i_iter}: {e}")
                     wandb.log({'exception': str(e),
-                               'learning_rate': config.learning_rate,
-                               'hyperparameters': dict(config)}, commit=False)
+                            'learning_rate': config.learning_rate,
+                            'hyperparameters': dict(config)}, commit=False)
                     # Save the model before exiting
                     save_model(model_p)
                     break  # Exit training loop
@@ -398,6 +416,7 @@ def train():
                     save_model(model_p)
                     print(f"Model saved to {model_p}")
 
+                # Log metrics to WandB
                 wandb.log(
                     {
                         'Iteration': i_iter,
@@ -406,11 +425,18 @@ def train():
                         'Value Loss': value_loss,
                         'Policy Loss': policy_loss,
                         'Edit Distance': edit_dist,
+                        # 'Transition Entropy': transition_entropy,
+                        f'{n}-gram Transition Entropy': ngram_transition_entropy,
+                        'Score': score,
                         'Best Edit Distance': best_edit,
                         'learning_rate': config.learning_rate,
                         # Log other hyperparameters if needed
                     }
                 )
+
+                # Print metrics to terminal
+                print(f"Iteration {i_iter} - Edit Distance: {edit_dist}, Conditional Entropy ngram: {ngram_transition_entropy}, Score: {score}")
+
 
         # After training loop, save the model regardless
         save_model(model_p)
@@ -421,7 +447,7 @@ def train():
             load_model(model_p)
             test_trajs, test_od = load_test_traj(test_p)
             start_time = time.time()
-            evaluate_model(test_od, test_trajs, policy_net, env)
+            evaluate_model('test_dataset',test_od, test_trajs, policy_net, env)
             print('Test time:', time.time() - start_time)
 
             # Evaluate log probability
@@ -449,7 +475,8 @@ if __name__ == '__main__':
     # Sweep configuration with more hyperparameters
     sweep_config = {
         'method': 'bayes', #random
-        'metric': {'goal': 'minimize', 'name': 'Best Edit Distance'},
+        # 'metric': {'goal': 'minimize', 'name': 'Best Edit Distance'},
+        'metric': {'goal': 'minimize', 'name': 'Score'},
         'parameters': {
            'learning_rate': {'distribution': 'uniform', 'min': 2e-4, 'max': 4e-4},
             'optim_batch_size': {'values': [32, 64, 128]},
@@ -471,10 +498,10 @@ if __name__ == '__main__':
     }
 
     # Initialize sweep
-    sweep_id = wandb.sweep(sweep_config, project='RCM-AIRL')
+    sweep_id = wandb.sweep(sweep_config, project='RCM-AIRL-diverse')
 
     # Run the sweep agent
-    wandb.agent(sweep_id, function=train, count=30)
+    wandb.agent(sweep_id, function=train, count=5)
 
 
 

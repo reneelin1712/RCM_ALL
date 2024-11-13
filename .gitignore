@@ -5,9 +5,13 @@ __pycache__/
 
 ./rcmenv
 
+*.csv
+
 /src/rcmenv
 /src/wandb
 /src/output_img
 /src/output_img_bc
 /src/attributions
+/src/output_img_20241106
+/src/output_img_*
 

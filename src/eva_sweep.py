@@ -80,5 +80,6 @@ if __name__ == '__main__':
     evaluate_only(args.model_path, args.cv_index)
 
 # python eva.py --model_path PATH_TO_YOUR_MODEL_FILE --cv_index CV_INDEX
-# python eva.py --model_path ../trained_models/base/airl_lr0_0001_bs64_gamma0_99_tau0_95_clip0_2_epoch20_runabc123.pt --cv_index 0
+# python eva_sweep.py --model_path /Users/mochi/Documents/Study/rcm/trained_models/base/airl_lr0_000240151566904156_bs128_gamma0_95_tau0_95_clip0_2_epoch20_runz6irxkua.pt --cv_index 0
 
+#  /Users/mochi/Documents/Study/rcm/trained_models/base 
