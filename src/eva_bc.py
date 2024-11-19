@@ -138,7 +138,7 @@ def evaluate_only():
     # evaluate_model(test_od, test_trajs, policy_net, env)
     train_trajs, train_od = load_test_traj(train_p)  # load_train_sample 
     # Evaluate on training data
-    evaluate_model("train", train_od, train_trajs, policy_net, env)
+    # evaluate_model("train", train_od, train_trajs, policy_net, env)
     
     # Evaluate on Test Data
     print('Evaluating on Test Data...')

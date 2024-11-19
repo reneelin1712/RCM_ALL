@@ -6,7 +6,7 @@ from model.policy import PolicyCNN
 from model.value import ValueCNN
 from model.discriminator import DiscriminatorAIRLCNN
 from core.agent import Agent
-from utils.evaluation import evaluate_model
+from utils.evaluation import evaluate_model,evaluate_log_prob
 import pandas as pd
 
 
@@ -113,7 +113,7 @@ def evaluate_only():
     
     # Path settings
     # model_path = "../trained_models/base/airl_CV0_size10000.pt"  # Adjust as necessary
-    model_path = "../trained_models/base/bleu90.pt"
+    model_path = "../trained_models/base/bleu90.pt" #bleu90.pt 9nzx7df7
     edge_p = "../data/base/edge.txt"
     network_p = "../data/base/transit.npy"
     path_feature_p = "../data/base/feature_od.npy"
@@ -141,8 +141,9 @@ def evaluate_only():
     print('Evaluating on Training Data...')
     # TODO
     train_trajs, train_od = load_test_traj(train_p)  # load_train_sample 
-    # Evaluate on training data
-    evaluate_model("train", train_od, train_trajs, policy_net, env)
+
+    # # Evaluate on training data
+    # evaluate_model("train", train_od, train_trajs, policy_net, env)
     
     # Evaluate on Test Data
     print('Evaluating on Test Data...')
@@ -151,15 +152,13 @@ def evaluate_only():
     # Evaluate on test data
     evaluate_model("test", test_od, test_trajs, policy_net, env)
 
-
-
+    test_trajs_ = env.import_demonstrations_step(test_p)
+    evaluate_log_prob(test_trajs_, policy_net)
+    train_trajs_ = env.import_demonstrations_step(train_p)
+    evaluate_log_prob(train_trajs_, policy_net)
 
 
 
 
 if __name__ == '__main__':
     evaluate_only()
-    # print('Evaluating on Training Data...')
-    # evaluate_only(dataset='train')
-    # print('Evaluating on Test Data...')
-    # evaluate_only(dataset='test')

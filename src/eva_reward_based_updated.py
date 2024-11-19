@@ -318,10 +318,10 @@ def main():
 
     # Paths
     data_p = "../data/base/cross_validation/train_CV0_size10000.csv"
-    model_path = "../trained_models/base/airl_CV0_size10000.pt"  # Adjust as necessary
-    edge_p = "../data/base/edge.txt"
+    model_path = "../trained_models/base/bleu90.pt"  # airl_CV0_size10000.pt
     network_p = "../data/base/transit.npy"
     path_feature_p = "../data/base/feature_od.npy"
+    edge_p = "../data/base/edge.txt"
 
     # Analyze the dataset to get df_analysis for generating trajectories
     df_analysis, df_multiple_routes, df_single_route, df_per_path = analyze_dataset(data_p)

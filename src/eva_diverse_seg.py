@@ -6,7 +6,7 @@ import csv
 import os
 
 # Function to analyze segments in the dataset
-def analyze_segments(data_p, segment_length=2):
+def analyze_segments(data_p, segment_length=3):
     # Read the dataset
     df = pd.read_csv(data_p)  # Adjust separator if needed
 
