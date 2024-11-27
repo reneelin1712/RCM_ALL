@@ -6,7 +6,7 @@ import pandas as pd
 import os
 
 # Captum imports for interpretability
-from captum.attr import IntegratedGradients, Saliency, FeatureAblation
+from captum.attr import IntegratedGradients
 
 # Custom modules (adjust the import paths as necessary)
 from network_env import RoadWorld
@@ -60,19 +60,11 @@ def load_model(model_path, device, env, path_feature_pad, edge_feature_pad):
 
     return policy_net, value_net, discriminator_net
 
-def prepare_input_data(env, test_trajs):
-    # Select the first trajectory from the test set
-    example_traj = test_trajs[0]
-    # Get the states and destination from the trajectory
-    states = [int(s) for s in example_traj[:-1]]  # All states except the last one
-    destination = int(example_traj[-1])  # The destination is the last state
-    return states, destination
-
 def get_cnn_input(policy_net, state, des, device):
-    state = torch.tensor([state], dtype=torch.long).to(device)
-    des = torch.tensor([des], dtype=torch.long).to(device)
+    state_tensor = torch.tensor([state], dtype=torch.long).to(device)
+    des_tensor = torch.tensor([des], dtype=torch.long).to(device)
     # Process features to get the CNN input
-    input_data = policy_net.process_features(state, des)
+    input_data = policy_net.process_features(state_tensor, des_tensor)
     return input_data
 
 def interpret_model():
@@ -101,12 +93,11 @@ def interpret_model():
         'Highway type: tertiary',         #16
         'Highway type: living_street',    #17
         'Highway type: secondary',        #18
-        # 'Edge ratio',                      #19
-        'neighbor mask'
+        'Neighbor mask'                   #19
     ]
 
+
     # Path settings (adjust paths as necessary)
-    # model_path = "../trained_models/base/airl_CV0_size10000.pt"
     model_path = "../trained_models/base/bleu90.pt"
     edge_p = "../data/base/edge.txt"
     network_p = "../data/base/transit.npy"
@@ -132,38 +123,29 @@ def interpret_model():
         model_path, device, env, path_feature_pad, edge_feature_pad
     )
 
+    # Extend feature names to include action features for the discriminator
+    action_feature_names = [f'Action_{i}' for i in range(discriminator_net.action_num)]
+    combined_feature_names = feature_names + action_feature_names
 
-    # # Load test trajectories
-    # test_trajs, test_od = load_test_traj(test_p)
 
     # Manually set the trajectory
-    # manual_traj_str = "231_230_408_419_76_271_388_311_31_267_56_34_36_374_241_129"
-    # 124_11_125_127_61_325_28_367_286_312_48_316_317_324_341_342_71_345_282_78_231
     manual_traj_str = "1_338_154_174_364_178_180_337_182_186_347_403_243_212_25_252_245_37_54_358_340_33_343_377_39_314_49_313_301_40"
-    #"124_11_125_127_61_325_28_367_286_312_48_316_317_324_341_342_71_345_282_78_231"
-    #"405_172_356_362_193_185_177_404_194_173_143_167_407_157_159_169"#"231_230_408_419_75_78"
     manual_traj = manual_traj_str.split('_')  # This will create a list of node IDs as strings
-    # Replace test_trajs with the manual trajectory
     test_trajs = [manual_traj]
 
     # Prepare input data
-    states_list, destination = prepare_input_data(env, test_trajs)
+    states_list = [int(s) for s in manual_traj[:-1]]  # All states except the last one
+    destination = int(manual_traj[-1])  # The destination is the last state
 
     # Ensure output directories exist
-    output_dir = 'output_img_20241127'
+    output_dir = 'output_img_step_by_step'
     os.makedirs(output_dir, exist_ok=True)
 
     # Initialize lists to store attributions and importance scores
     attributions_ig_list = []
-    attributions_ablation_list = []
     channel_importance_ig_list = []
-    channel_importance_ablation_list = []
-
     disc_attributions_ig_list = []
-    disc_attributions_ablation_list = []
     channel_importance_ig_disc_list = []
-    channel_importance_ablation_disc_list = []
-
     rewards_list = []
     actions_list = []
 
@@ -173,24 +155,8 @@ def interpret_model():
         input_data = get_cnn_input(policy_net, state, destination, device)
         input_data.requires_grad = True
 
-        # Prepare tensors
         state_tensor = torch.tensor([state], dtype=torch.long).to(device)
         des_tensor = torch.tensor([destination], dtype=torch.long).to(device)
-
-        # Get action probabilities from policy network
-        with torch.no_grad():
-            output = policy_net.forward(input_data)
-            x_mask = policy_net.policy_mask[state_tensor]
-            output = output.masked_fill((1 - x_mask).bool(), -1e32)
-            action_probs = torch.softmax(output, dim=1)
-            predicted_action = torch.argmax(action_probs, dim=1)
-            log_pi = torch.log(action_probs[0, predicted_action])
-
-        # Get next state
-        action = predicted_action.item()
-        actions_list.append(action)
-        next_state = env.state_action[state][action]
-        next_state_tensor = torch.tensor([next_state], dtype=torch.long).to(device)
 
         # Compute attributions for policy network
         def forward_func_policy(input_data):
@@ -201,51 +167,51 @@ def interpret_model():
             action_probs = torch.softmax(x, dim=1)
             return action_probs
 
-        # Integrated Gradients for policy network
-        ig = IntegratedGradients(forward_func_policy)
-        attributions_ig = ig.attribute(input_data, target=predicted_action)
-        attributions_ig_np = attributions_ig.squeeze().cpu().detach().numpy()
-        attributions_ig_list.append(attributions_ig_np)
+        with torch.no_grad():
+            output = policy_net.forward(input_data)
+            x_mask = policy_net.policy_mask[state_tensor]
+            output = output.masked_fill((1 - x_mask).bool(), -1e32)
+            action_probs = torch.softmax(output, dim=1)
+            action_taken = torch.argmax(action_probs, dim=1).item()
+            log_pi = torch.log(action_probs[0, action_taken])
 
-        # Feature Ablation for policy network
-        feature_ablation = FeatureAblation(forward_func_policy)
-        attributions_ablation = feature_ablation.attribute(input_data, target=predicted_action)
-        attributions_ablation_np = attributions_ablation.squeeze().cpu().detach().numpy()
-        attributions_ablation_list.append(attributions_ablation_np)
+        actions_list.append(action_taken)
+        next_state = env.state_action[state][action_taken]
+        next_state_tensor = torch.tensor([next_state], dtype=torch.long).to(device)
 
-        # Aggregate attributions for policy network
-        channel_importance_ig = np.sum(np.abs(attributions_ig_np), axis=(1, 2))
-        channel_importance_ig_list.append(channel_importance_ig)
+        ig_policy = IntegratedGradients(forward_func_policy)
+        attributions_ig_policy = ig_policy.attribute(input_data, target=action_taken)
+        attributions_ig_policy_np = attributions_ig_policy.squeeze().cpu().detach().numpy()
+        attributions_ig_list.append(attributions_ig_policy_np)
 
-        channel_importance_ablation = np.sum(np.abs(attributions_ablation_np), axis=(1, 2))
-        channel_importance_ablation_list.append(channel_importance_ablation)
+        # Aggregate attributions for policy network (Preserving sign)
+        channel_importance_policy = np.sum(attributions_ig_policy_np, axis=(1, 2))
+        channel_importance_ig_list.append(channel_importance_policy)
 
         # Now compute attributions for the discriminator network
-        # Prepare inputs for discriminator
-        act_tensor = predicted_action.to(device)
-        act_tensor = act_tensor.view(-1).long()
-        log_pi_tensor = log_pi.to(device).view(-1)
+        # Prepare action tensor
+        act_tensor = torch.tensor([action_taken], dtype=torch.long).to(device)
+        act_one_hot = F.one_hot(act_tensor, num_classes=discriminator_net.action_num).float()
+        act_one_hot.requires_grad = True
 
         # Process features for discriminator
         input_data_disc = discriminator_net.process_neigh_features(state_tensor, des_tensor)
         input_data_disc.requires_grad = True
 
-        def forward_func_discriminator(input_data):
+        def forward_func_discriminator(input_data, x_act):
             # Discriminator computations
             x = input_data
             x = discriminator_net.pool(F.leaky_relu(discriminator_net.conv1(x), 0.2))
             x = F.leaky_relu(discriminator_net.conv2(x), 0.2)
             x = x.view(-1, 30)  # x shape: [batch_size, 30]
 
-            # Compute x_act
-            x_act = F.one_hot(act_tensor, num_classes=discriminator_net.action_num).to(device)
+            # x_act is act_one_hot
             if x_act.dim() == 1:
                 x_act = x_act.unsqueeze(0)  # x_act shape: [1, num_classes]
 
             # Expand x_act to match the batch size of x
             batch_size = x.shape[0]
             x_act = x_act.expand(batch_size, -1)  # x_act shape: [batch_size, num_classes]
-
 
             # Concatenate x and x_act
             x = torch.cat([x, x_act], 1)  # x shape: [batch_size, 30 + num_classes]
@@ -266,31 +232,26 @@ def interpret_model():
             next_x_state = discriminator_net.h_fc3(next_x_state)
 
             f = rs + discriminator_net.gamma * next_x_state - x_state
+            f = f.squeeze(-1)  # Ensure f is of shape [batch_size]
             return f
 
-        # Integrated Gradients for discriminator network
         ig_disc = IntegratedGradients(forward_func_discriminator)
-        attributions_ig_disc = ig_disc.attribute(input_data_disc, target=None)
-        attributions_ig_disc_np = attributions_ig_disc.squeeze().cpu().detach().numpy()
-        disc_attributions_ig_list.append(attributions_ig_disc_np)
+        attributions_ig_disc = ig_disc.attribute((input_data_disc, act_one_hot))
+        attributions_input = attributions_ig_disc[0].squeeze().cpu().detach().numpy()
+        attributions_action = attributions_ig_disc[1].squeeze().cpu().detach().numpy()
 
-        # Feature Ablation for discriminator network
-        feature_ablation_disc = FeatureAblation(forward_func_discriminator)
-        attributions_ablation_disc = feature_ablation_disc.attribute(input_data_disc, target=None)
-        attributions_ablation_disc_np = attributions_ablation_disc.squeeze().cpu().detach().numpy()
-        disc_attributions_ablation_list.append(attributions_ablation_disc_np)
+        # Aggregate attributions
+        channel_importance_input = np.sum(attributions_input, axis=(1, 2))
+        channel_importance_action = attributions_action  # Already a vector
 
-        # Aggregate attributions for discriminator network
-        channel_importance_ig_disc = np.sum(np.abs(attributions_ig_disc_np), axis=(1, 2))
-        channel_importance_ig_disc_list.append(channel_importance_ig_disc)
-
-        channel_importance_ablation_disc = np.sum(np.abs(attributions_ablation_disc_np), axis=(1, 2))
-        channel_importance_ablation_disc_list.append(channel_importance_ablation_disc)
+        # Combine input feature attributions and action attributions
+        combined_importance = np.concatenate([channel_importance_input, channel_importance_action])
+        channel_importance_ig_disc_list.append(combined_importance)
 
         # Calculate reward
         with torch.no_grad():
             reward = discriminator_net.calculate_reward(
-                state_tensor, des_tensor, act_tensor, log_pi_tensor, next_state_tensor
+                state_tensor, des_tensor, act_tensor, log_pi, next_state_tensor
             )
             rewards_list.append(reward.item())
 
@@ -301,7 +262,7 @@ def interpret_model():
 
         # Policy Network - Integrated Gradients
         importance_scores = channel_importance_ig_list[idx]
-        ranked_indices = np.argsort(-importance_scores)
+        ranked_indices = np.argsort(-np.abs(importance_scores))
         sorted_features = [feature_names[i] for i in ranked_indices]
         sorted_importance = importance_scores[ranked_indices]
 
@@ -316,45 +277,20 @@ def interpret_model():
             os.path.join(output_dir, f'policy_ig_feature_importance_step_{idx+1}.csv'), index=False
         )
 
-        # Plot Feature Importance
+        # Plot Feature Importance (Include Sign)
         plt.figure(figsize=(10, 6))
-        plt.barh(sorted_features[::-1], sorted_importance[::-1])
+        colors = ['green' if val >= 0 else 'red' for val in sorted_importance]
+        plt.barh(sorted_features[::-1], sorted_importance[::-1], color=colors[::-1])
         plt.xlabel('Importance Score')
         plt.title(f'Policy Network IG Feature Importance - Step {idx+1} - Action {action}')
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, f'policy_ig_feature_importance_step_{idx+1}.png'))
         plt.close()
 
-        # Policy Network - Feature Ablation
-        importance_scores_ablation = channel_importance_ablation_list[idx]
-        ranked_indices_ablation = np.argsort(-importance_scores_ablation)
-        sorted_features_ablation = [feature_names[i] for i in ranked_indices_ablation]
-        sorted_importance_ablation = importance_scores_ablation[ranked_indices_ablation]
-
-        # Create DataFrame
-        feature_importance_ablation_df = pd.DataFrame({
-            'Feature': sorted_features_ablation,
-            'Importance Score': sorted_importance_ablation
-        })
-
-        # Save DataFrame to CSV
-        feature_importance_ablation_df.to_csv(
-            os.path.join(output_dir, f'policy_ablation_feature_importance_step_{idx+1}.csv'), index=False
-        )
-
-        # Plot Feature Importance
-        plt.figure(figsize=(10, 6))
-        plt.barh(sorted_features_ablation[::-1], sorted_importance_ablation[::-1])
-        plt.xlabel('Importance Score')
-        plt.title(f'Policy Network Feature Ablation - Step {idx+1} - Action {action}')
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'policy_ablation_feature_importance_step_{idx+1}.png'))
-        plt.close()
-
         # Discriminator Network - Integrated Gradients
         importance_scores_disc = channel_importance_ig_disc_list[idx]
-        ranked_indices_disc = np.argsort(-importance_scores_disc)
-        sorted_features_disc = [feature_names[i] for i in ranked_indices_disc]
+        ranked_indices_disc = np.argsort(-np.abs(importance_scores_disc))
+        sorted_features_disc = [combined_feature_names[i] for i in ranked_indices_disc]
         sorted_importance_disc = importance_scores_disc[ranked_indices_disc]
 
         # Create DataFrame
@@ -368,84 +304,21 @@ def interpret_model():
             os.path.join(output_dir, f'discriminator_ig_feature_importance_step_{idx+1}.csv'), index=False
         )
 
-        # Plot Feature Importance
+        # Plot Feature Importance (Include Sign)
         plt.figure(figsize=(10, 6))
-        plt.barh(sorted_features_disc[::-1], sorted_importance_disc[::-1])
+        colors_disc = ['green' if val >= 0 else 'red' for val in sorted_importance_disc]
+        plt.barh(sorted_features_disc[::-1], sorted_importance_disc[::-1], color=colors_disc[::-1])
         plt.xlabel('Importance Score')
-        plt.title(f'Discriminator IG Feature Importance - Step {idx+1}')
+        plt.title(f'Discriminator IG Feature Importance - Step {idx+1} - Action {action}')
         plt.tight_layout()
         plt.savefig(os.path.join(output_dir, f'discriminator_ig_feature_importance_step_{idx+1}.png'))
-        plt.close()
-
-        # Discriminator Network - Feature Ablation
-        importance_scores_ablation_disc = channel_importance_ablation_disc_list[idx]
-        ranked_indices_ablation_disc = np.argsort(-importance_scores_ablation_disc)
-        sorted_features_ablation_disc = [feature_names[i] for i in ranked_indices_ablation_disc]
-        sorted_importance_ablation_disc = importance_scores_ablation_disc[ranked_indices_ablation_disc]
-
-        # Create DataFrame
-        feature_importance_ablation_disc_df = pd.DataFrame({
-            'Feature': sorted_features_ablation_disc,
-            'Importance Score': sorted_importance_ablation_disc
-        })
-
-        # Save DataFrame to CSV
-        feature_importance_ablation_disc_df.to_csv(
-            os.path.join(output_dir, f'discriminator_ablation_feature_importance_step_{idx+1}.csv'), index=False
-        )
-
-        # Plot Feature Importance
-        plt.figure(figsize=(10, 6))
-        plt.barh(sorted_features_ablation_disc[::-1], sorted_importance_ablation_disc[::-1])
-        plt.xlabel('Importance Score')
-        plt.title(f'Discriminator Feature Ablation - Step {idx+1}')
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'discriminator_ablation_feature_importance_step_{idx+1}.png'))
-        plt.close()
-
-        # Plot Heatmaps for Policy Network
-        # Integrated Gradients
-        attr_ig_sum = np.sum(attributions_ig_list[idx], axis=0)
-        plt.figure(figsize=(6, 4))
-        plt.imshow(attr_ig_sum, cmap='hot')
-        plt.title(f'Policy Network IG Attribution Map - Step {idx+1} - Action {action}')
-        plt.colorbar()
-        plt.savefig(os.path.join(output_dir, f'policy_ig_heatmap_step_{idx+1}.png'))
-        plt.close()
-
-        # Feature Ablation
-        attr_ablation_sum = np.sum(attributions_ablation_list[idx], axis=0)
-        plt.figure(figsize=(6, 4))
-        plt.imshow(attr_ablation_sum, cmap='hot')
-        plt.title(f'Policy Network Feature Ablation Attribution Map - Step {idx+1} - Action {action}')
-        plt.colorbar()
-        plt.savefig(os.path.join(output_dir, f'policy_ablation_heatmap_step_{idx+1}.png'))
-        plt.close()
-
-        # Plot Heatmaps for Discriminator Network
-        # Integrated Gradients
-        attr_ig_disc_sum = np.sum(disc_attributions_ig_list[idx], axis=0)
-        plt.figure(figsize=(6, 4))
-        plt.imshow(attr_ig_disc_sum, cmap='hot')
-        plt.title(f'Discriminator IG Attribution Map - Step {idx+1}')
-        plt.colorbar()
-        plt.savefig(os.path.join(output_dir, f'discriminator_ig_heatmap_step_{idx+1}.png'))
-        plt.close()
-
-        # Feature Ablation
-        attr_ablation_disc_sum = np.sum(disc_attributions_ablation_list[idx], axis=0)
-        plt.figure(figsize=(6, 4))
-        plt.imshow(attr_ablation_disc_sum, cmap='hot')
-        plt.title(f'Discriminator Feature Ablation Attribution Map - Step {idx+1}')
-        plt.colorbar()
-        plt.savefig(os.path.join(output_dir, f'discriminator_ablation_heatmap_step_{idx+1}.png'))
         plt.close()
 
         # Optionally, visualize attributions for each channel (Policy Network - Integrated Gradients)
         num_channels = attributions_ig_list[idx].shape[0]
         for i in range(num_channels):
             plt.figure(figsize=(6, 4))
-            plt.imshow(attributions_ig_list[idx][i], cmap='hot')
+            plt.imshow(attributions_ig_list[idx][i], cmap='bwr', vmin=-np.max(np.abs(attributions_ig_list[idx][i])), vmax=np.max(np.abs(attributions_ig_list[idx][i])))
             plt.title(f'Policy IG - {feature_names[i]} - Step {idx+1} - Action {action}')
             plt.colorbar()
             plt.savefig(
@@ -463,7 +336,7 @@ def interpret_model():
     plt.savefig(os.path.join(output_dir, 'rewards_over_trajectory.png'))
     plt.close()
 
-    print("Interpretation complete. Results saved in the 'output_img' directory.")
+    print("Interpretation complete. Results saved in the 'output_img_step_by_step' directory.")
 
 if __name__ == "__main__":
     interpret_model()

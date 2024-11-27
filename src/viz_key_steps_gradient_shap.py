@@ -6,7 +6,8 @@ import pandas as pd
 import os
 
 # Captum imports for interpretability
-from captum.attr import IntegratedGradients
+# from captum.attr import IntegratedGradients
+from captum.attr import GradientShap
 
 # Custom modules (adjust the import paths as necessary)
 from network_env import RoadWorld
@@ -60,10 +61,10 @@ def load_model(model_path, device, env, path_feature_pad, edge_feature_pad):
     return policy_net, value_net, discriminator_net
 
 def get_cnn_input(policy_net, state, des, device):
-    state = torch.tensor([state], dtype=torch.long).to(device)
-    des = torch.tensor([des], dtype=torch.long).to(device)
+    state_tensor = torch.tensor([state], dtype=torch.long).to(device)
+    des_tensor = torch.tensor([des], dtype=torch.long).to(device)
     # Process features to get the CNN input
-    input_data = policy_net.process_features(state, des)
+    input_data = policy_net.process_features(state_tensor, des_tensor)
     return input_data
 
 def interpret_model():
@@ -125,11 +126,15 @@ def interpret_model():
         model_path, device, env, path_feature_pad, edge_feature_pad
     )
 
+    # Extend feature names to include action features for the discriminator
+    action_feature_names = [f'Action_{i}' for i in range(discriminator_net.action_num)]
+    combined_feature_names = feature_names + action_feature_names
+
     # Read generated trajectories
     df_generated = pd.read_csv(generated_trajs_csv)[0:30]
 
     # Ensure output directories exist
-    output_dir = f'output_img_{model_name}_20241127'
+    output_dir = f'output_img_{model_name}_20241127_final'
     output_csv_dir = os.path.join(output_dir, 'csv')
     output_png_dir = os.path.join(output_dir, 'png')
     os.makedirs(output_csv_dir, exist_ok=True)
@@ -219,8 +224,8 @@ def interpret_model():
                 continue  # Skip invalid indices
 
             state = states_list[step_idx]
-            action = actions_taken[step_idx]
-            next_state = trajectory[step_idx + 1]
+            action_taken = actions_taken[step_idx]
+            next_state_taken = trajectory[step_idx + 1]
 
             # Prepare input data for policy network
             input_data = get_cnn_input(policy_net, state, destination_node, device)
@@ -229,19 +234,6 @@ def interpret_model():
             state_tensor = torch.tensor([state], dtype=torch.long).to(device)
             des_tensor = torch.tensor([destination_node], dtype=torch.long).to(device)
 
-            # Get action probabilities from policy network
-            with torch.no_grad():
-                output = policy_net.forward(input_data)
-                x_mask = policy_net.policy_mask[state_tensor]
-                output = output.masked_fill((1 - x_mask).bool(), -1e32)
-                action_probs = torch.softmax(output, dim=1)
-                log_pi = torch.log(action_probs[0, action])
-
-            # Prepare tensors
-            action_tensor = torch.tensor([action], dtype=torch.long).to(device)
-            next_state_tensor = torch.tensor([next_state], dtype=torch.long).to(device)
-            log_pi_tensor = log_pi.to(device).view(-1)
-
             # Compute attributions for policy network
             def forward_func_policy(input_data):
                 x = input_data
@@ -249,53 +241,55 @@ def interpret_model():
                 x_mask = policy_net.policy_mask[state_tensor]
                 x = x.masked_fill((1 - x_mask).bool(), -1e32)
                 action_probs = torch.softmax(x, dim=1)
-                return action_probs
+                return action_probs  # Returns tensor of shape [batch_size, num_actions]
 
             # Integrated Gradients for policy network
-            ig = IntegratedGradients(forward_func_policy)
-            attributions_ig = ig.attribute(input_data, target=action)
-            attributions_ig_np = attributions_ig.squeeze().cpu().detach().numpy()
+            ig_policy = IntegratedGradients(forward_func_policy)
+            attributions_ig_policy = ig_policy.attribute(input_data, target=action_taken)
+            attributions_ig_policy_np = attributions_ig_policy.squeeze().cpu().detach().numpy()
 
             # Aggregate attributions for policy network (Preserving sign)
-            channel_importance_ig = np.sum(attributions_ig_np, axis=(1, 2))
+            channel_importance_policy = np.sum(attributions_ig_policy_np, axis=(1, 2))
 
             # Append to aggregated importance
-            aggregated_importance_policy[key].append(channel_importance_ig)
+            aggregated_importance_policy[key].append(channel_importance_policy)
 
             # Create DataFrame for policy network
-            importance_scores = channel_importance_ig
-            ranked_indices = np.argsort(-np.abs(importance_scores))  # Sort by absolute value for ranking
-            sorted_features = [feature_names[i] for i in ranked_indices]
-            sorted_importance = importance_scores[ranked_indices]
+            importance_scores_policy = channel_importance_policy
+            ranked_indices_policy = np.argsort(-np.abs(importance_scores_policy))  # Sort by absolute value
+            sorted_features_policy = [feature_names[i] for i in ranked_indices_policy]
+            sorted_importance_policy = importance_scores_policy[ranked_indices_policy]
 
-            feature_importance_df = pd.DataFrame({
-                'Feature': sorted_features,
-                'Importance Score': sorted_importance
+            feature_importance_policy_df = pd.DataFrame({
+                'Feature': sorted_features_policy,
+                'Importance Score': sorted_importance_policy
             })
 
             # Save DataFrame to CSV
-            feature_importance_df.to_csv(
+            feature_importance_policy_df.to_csv(
                 os.path.join(output_csv_dir, f'trajectory_{idx+1}_{key}_policy_ig_feature_importance.csv'), index=False
             )
 
             # Now compute attributions for the discriminator network
-            # Prepare inputs for discriminator
-            act_tensor = action_tensor.view(-1).long()
-            log_pi_tensor = log_pi.to(device).view(-1)
+            # Prepare action tensor
+            act_tensor = torch.tensor([action_taken], dtype=torch.long).to(device)
+            act_one_hot = F.one_hot(act_tensor, num_classes=discriminator_net.action_num).float()
+            act_one_hot.requires_grad = True
 
             # Process features for discriminator
             input_data_disc = discriminator_net.process_neigh_features(state_tensor, des_tensor)
             input_data_disc.requires_grad = True
 
-            def forward_func_discriminator(input_data):
+            next_state_tensor = torch.tensor([next_state_taken], dtype=torch.long).to(device)
+
+            def forward_func_discriminator(input_data, x_act):
                 # Discriminator computations
                 x = input_data
                 x = discriminator_net.pool(F.leaky_relu(discriminator_net.conv1(x), 0.2))
                 x = F.leaky_relu(discriminator_net.conv2(x), 0.2)
                 x = x.view(-1, 30)  # x shape: [batch_size, 30]
 
-                # Compute x_act
-                x_act = F.one_hot(act_tensor, num_classes=discriminator_net.action_num).to(device)
+                # x_act is act_one_hot
                 if x_act.dim() == 1:
                     x_act = x_act.unsqueeze(0)  # x_act shape: [1, num_classes]
 
@@ -322,23 +316,29 @@ def interpret_model():
                 next_x_state = discriminator_net.h_fc3(next_x_state)
 
                 f = rs + discriminator_net.gamma * next_x_state - x_state
+                f = f.squeeze(-1)  # Ensure f is of shape [batch_size]
                 return f
 
             # Integrated Gradients for discriminator network
             ig_disc = IntegratedGradients(forward_func_discriminator)
-            attributions_ig_disc = ig_disc.attribute(input_data_disc)
-            attributions_ig_disc_np = attributions_ig_disc.squeeze().cpu().detach().numpy()
+            attributions_ig_disc = ig_disc.attribute((input_data_disc, act_one_hot))
+            attributions_input = attributions_ig_disc[0].squeeze().cpu().detach().numpy()
+            attributions_action = attributions_ig_disc[1].squeeze().cpu().detach().numpy()
 
-            # Aggregate attributions for discriminator network (Preserving sign)
-            channel_importance_ig_disc = np.sum(attributions_ig_disc_np, axis=(1, 2))
+            # Aggregate attributions
+            channel_importance_input = np.sum(attributions_input, axis=(1, 2))
+            channel_importance_action = attributions_action  # Already a vector
+
+            # Combine input feature attributions and action attributions
+            combined_importance = np.concatenate([channel_importance_input, channel_importance_action])
 
             # Append to aggregated importance
-            aggregated_importance_discriminator[key].append(channel_importance_ig_disc)
+            aggregated_importance_discriminator[key].append(combined_importance)
 
             # Create DataFrame for discriminator network
-            importance_scores_disc = channel_importance_ig_disc
-            ranked_indices_disc = np.argsort(-np.abs(importance_scores_disc))  # Sort by absolute value
-            sorted_features_disc = [feature_names[i] for i in ranked_indices_disc]
+            importance_scores_disc = combined_importance
+            ranked_indices_disc = np.argsort(-np.abs(importance_scores_disc))
+            sorted_features_disc = [combined_feature_names[i] for i in ranked_indices_disc]
             sorted_importance_disc = importance_scores_disc[ranked_indices_disc]
 
             feature_importance_disc_df = pd.DataFrame({
@@ -348,12 +348,13 @@ def interpret_model():
 
             # Save DataFrame to CSV
             feature_importance_disc_df.to_csv(
-                os.path.join(output_csv_dir, f'trajectory_{idx+1}_{key}_discriminator_ig_feature_importance.csv'), index=False
+                os.path.join(output_csv_dir, f'trajectory_{idx+1}_{key}_discriminator_ig_feature_importance.csv'),
+                index=False
             )
 
             # Compare top N features
             N = 3  # Top N features to compare
-            top_features_policy = set(sorted_features[:N])
+            top_features_policy = set(sorted_features_policy[:N])
             top_features_discriminator = set(sorted_features_disc[:N])
             overlap = top_features_policy.intersection(top_features_discriminator)
             overlap_count = len(overlap)
@@ -382,7 +383,7 @@ def interpret_model():
             fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(20, 6))
 
             # Plot Policy Network Feature Importance
-            axes[0].barh(sorted_features, sorted_importance, color=['green' if v >= 0 else 'red' for v in sorted_importance])
+            axes[0].barh(sorted_features_policy, sorted_importance_policy, color=['green' if v >= 0 else 'red' for v in sorted_importance_policy])
             axes[0].set_xlabel('Importance Score')
             axes[0].set_title('Policy Network IG Feature Importance')
             axes[0].invert_yaxis()  # Highest importance at the top
@@ -409,37 +410,43 @@ def interpret_model():
             importance_array_policy = np.stack(aggregated_importance_policy[key], axis=0)
             mean_importance_policy = np.mean(importance_array_policy, axis=0)
 
-            importance_array_disc = np.stack(aggregated_importance_discriminator[key], axis=0)
-            mean_importance_disc = np.mean(importance_array_disc, axis=0)
-
             # Policy Network Mean Importance
-            ranked_indices_policy = np.argsort(-np.abs(mean_importance_policy))  # Sort by absolute value
+            importance_scores_policy = mean_importance_policy
+            ranked_indices_policy = np.argsort(-np.abs(importance_scores_policy))  # Sort by absolute value
             sorted_features_policy = [feature_names[i] for i in ranked_indices_policy]
-            sorted_importance_policy = mean_importance_policy[ranked_indices_policy]
+            sorted_importance_policy = importance_scores_policy[ranked_indices_policy]
 
-            # Discriminator Network Mean Importance
-            ranked_indices_disc = np.argsort(-np.abs(mean_importance_disc))
-            sorted_features_disc = [feature_names[i] for i in ranked_indices_disc]
-            sorted_importance_disc = mean_importance_disc[ranked_indices_disc]
-
-            # Create DataFrames
+            # Create DataFrame for policy network
             feature_importance_policy_df = pd.DataFrame({
                 'Feature': sorted_features_policy,
                 'Mean Importance Score': sorted_importance_policy
             })
 
+            # Save DataFrame to CSV
+            feature_importance_policy_df.to_csv(
+                os.path.join(output_csv_dir, f'aggregated_{key}_policy_ig_feature_importance.csv'), index=False
+            )
+
+            # Now process the discriminator aggregated importance
+            importance_array_disc = np.stack(aggregated_importance_discriminator[key], axis=0)
+            mean_importance_disc = np.mean(importance_array_disc, axis=0)
+
+            # Discriminator Network Mean Importance
+            importance_scores_disc = mean_importance_disc
+            ranked_indices_disc = np.argsort(-np.abs(importance_scores_disc))
+            sorted_features_disc = [combined_feature_names[i] for i in ranked_indices_disc]
+            sorted_importance_disc = importance_scores_disc[ranked_indices_disc]
+
+            # Create DataFrame
             feature_importance_disc_df = pd.DataFrame({
                 'Feature': sorted_features_disc,
                 'Mean Importance Score': sorted_importance_disc
             })
 
-            # Save DataFrames to CSV
-            feature_importance_policy_df.to_csv(
-                os.path.join(output_csv_dir, f'aggregated_{key}_policy_ig_feature_importance.csv'), index=False
-            )
-
+            # Save DataFrame to CSV
             feature_importance_disc_df.to_csv(
-                os.path.join(output_csv_dir, f'aggregated_{key}_discriminator_ig_feature_importance.csv'), index=False
+                os.path.join(output_csv_dir, f'aggregated_{key}_discriminator_ig_feature_importance.csv'),
+                index=False
             )
 
             # Compare top N features in aggregated importance
@@ -495,7 +502,7 @@ def interpret_model():
             avg_overlap = np.mean(overlap_counts[key])
             print(f"Average top-{N} feature overlap at {key} steps: {avg_overlap:.2f}")
 
-    print("Interpretation complete. Results saved in the 'output_img' directory.")
+    print("Interpretation complete. Results saved in the output directories.")
 
 if __name__ == "__main__":
     interpret_model()
