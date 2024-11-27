@@ -213,7 +213,7 @@ def interpret_model():
     policy_background = shap.kmeans(input_array_flat, 50)
 
     # Select test samples
-    policy_test_samples = input_array_flat  # Adjust as needed
+    policy_test_samples = input_array_flat[0:1000]  # Adjust as needed
 
     # Update num_samples to match the number of test samples
     num_samples = policy_test_samples.shape[0]
@@ -351,7 +351,7 @@ def interpret_model():
     discriminator_background = shap.kmeans(input_array_disc_flat, 50)
 
     # Select test samples for discriminator network
-    discriminator_test_samples = input_array_disc_flat  # Adjust as needed
+    discriminator_test_samples = input_array_disc_flat[0:1000]  # Adjust as needed
 
     # Update num_samples to match the number of test samples
     num_samples_disc = discriminator_test_samples.shape[0]

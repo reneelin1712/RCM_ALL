@@ -7,7 +7,7 @@ __pycache__/
 
 /src/rcmenv
 
-*.csv
+/src/*.csv
 
 /src/rcmenv
 /src/wandb
