@@ -126,7 +126,7 @@ def interpret_model():
     )
 
     # Read generated trajectories
-    df_generated = pd.read_csv(generated_trajs_csv)[0:300]
+    df_generated = pd.read_csv(generated_trajs_csv)
 
     # Ensure output directories exist
     output_dir = f'output_img_{model_name}'

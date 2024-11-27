@@ -316,3 +316,8 @@ class RoadWorld(object):
         print('max_route_length', self.max_route_length)
         print('n_traj', len(trajs))
         return trajs
+
+    def get_next_state(self, state, action):
+        # Access the state-action transition mapping
+        next_state = self.state_action[state, action].item()
+        return next_state
