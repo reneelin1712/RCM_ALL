@@ -1,0 +1,21 @@
+Feature,Mean SHAP Value
+Highway type: primary,0.32135210107557177
+Number of left turns,0.08133667349010473
+Number of living_street roads,0.053968447758491425
+Neighbor mask,0.05037258923326851
+Number of links,0.041507289216677234
+Mask feature,0.04139980573394017
+Highway type: tertiary,0.04068088187098285
+Highway type: unclassified,0.02433303220628539
+Total length,0.020718107831600323
+Number of secondary roads,0.020660538599235306
+Highway type: living_street,0.01681378341999284
+Number of primary roads,0.016223850363611955
+Edge length,0.014207180560756363
+Number of residential roads,0.010148600910882257
+Highway type: residential,0.010116868190558707
+Number of right turns,0.0074057664598873255
+Number of tertiary roads,0.001090625793476148
+Number of unclassified roads,-0.009810680960791409
+Number of U-turns,-0.01951625945323852
+Highway type: secondary,-0.3163520436989062

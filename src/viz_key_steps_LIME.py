@@ -6,7 +6,7 @@ import pandas as pd
 import os
 
 # Captum imports for interpretability
-from captum.attr import DeepLift
+from captum.attr import Lime
 
 # Custom modules (adjust the import paths as necessary)
 from network_env import RoadWorld
@@ -65,63 +65,6 @@ def get_cnn_input(policy_net, state, des, device):
     # Process features to get the CNN input
     input_data = policy_net.process_features(state_tensor, des_tensor)
     return input_data
-
-# Define wrapper classes for DeepLift
-class WrappedPolicyNet(torch.nn.Module):
-    def __init__(self, policy_net, policy_mask, state_tensor):
-        super(WrappedPolicyNet, self).__init__()
-        self.policy_net = policy_net
-        self.policy_mask = policy_mask
-        self.state_tensor = state_tensor
-
-    def forward(self, input_data):
-        x = input_data
-        x = self.policy_net.forward(x)
-        x_mask = self.policy_mask[self.state_tensor]
-        x = x.masked_fill((1 - x_mask).bool(), -1e32)
-        action_probs = torch.softmax(x, dim=1)
-        return action_probs
-
-class WrappedDiscriminatorNet(torch.nn.Module):
-    def __init__(self, discriminator_net, state_tensor, des_tensor, next_state_tensor):
-        super(WrappedDiscriminatorNet, self).__init__()
-        self.discriminator_net = discriminator_net
-        self.state_tensor = state_tensor
-        self.des_tensor = des_tensor
-        self.next_state_tensor = next_state_tensor
-
-    def forward(self, input_data, x_act):
-        # Discriminator computations
-        x = input_data
-        x = self.discriminator_net.pool(F.leaky_relu(self.discriminator_net.conv1(x), 0.2))
-        x = F.leaky_relu(self.discriminator_net.conv2(x), 0.2)
-        x = x.view(-1, 30)  # x shape: [batch_size, 30]
-
-        # x_act is act_one_hot
-        if x_act.dim() == 1:
-            x_act = x_act.unsqueeze(0)  # x_act shape: [1, num_classes]
-
-        # Concatenate x and x_act
-        x = torch.cat([x, x_act], 1)  # x shape: [batch_size, 30 + num_classes]
-
-        x = F.leaky_relu(self.discriminator_net.fc1(x), 0.2)
-        x = F.leaky_relu(self.discriminator_net.fc2(x), 0.2)
-        rs = self.discriminator_net.fc3(x)
-
-        # Compute hs and hs_next
-        x_state = self.discriminator_net.process_state_features(self.state_tensor, self.des_tensor)
-        x_state = F.leaky_relu(self.discriminator_net.h_fc1(x_state), 0.2)
-        x_state = F.leaky_relu(self.discriminator_net.h_fc2(x_state), 0.2)
-        x_state = self.discriminator_net.h_fc3(x_state)
-
-        next_x_state = self.discriminator_net.process_state_features(self.next_state_tensor, self.des_tensor)
-        next_x_state = F.leaky_relu(self.discriminator_net.h_fc1(next_x_state), 0.2)
-        next_x_state = F.leaky_relu(self.discriminator_net.h_fc2(next_x_state), 0.2)
-        next_x_state = self.discriminator_net.h_fc3(next_x_state)
-
-        f = rs + self.discriminator_net.gamma * next_x_state - x_state
-        f = f.squeeze(-1)  # Ensure f is of shape [batch_size]
-        return f
 
 def interpret_model():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -187,10 +130,10 @@ def interpret_model():
     combined_feature_names = feature_names + action_feature_names
 
     # Read generated trajectories
-    df_generated = pd.read_csv(generated_trajs_csv)[0:30]
+    df_generated = pd.read_csv(generated_trajs_csv)
 
     # Ensure output directories exist
-    output_dir = f'output_img_{model_name}_deeplift'
+    output_dir = f'output_img_{model_name}_lime'
     output_csv_dir = os.path.join(output_dir, 'csv')
     output_png_dir = os.path.join(output_dir, 'png')
     os.makedirs(output_csv_dir, exist_ok=True)
@@ -291,19 +234,36 @@ def interpret_model():
             des_tensor = torch.tensor([destination_node], dtype=torch.long).to(device)
             next_state_tensor = torch.tensor([next_state_taken], dtype=torch.long).to(device)
 
-            # Create an instance of the wrapped module
-            wrapped_policy_net = WrappedPolicyNet(policy_net, policy_net.policy_mask, state_tensor)
-            wrapped_policy_net.to(device)
+            # Infer shape for policy network
+            num_channels, height, width = input_data.shape[1], input_data.shape[2], input_data.shape[3]
 
-            # Use DeepLift with the wrapped module
-            dl_policy = DeepLift(wrapped_policy_net)
-            attributions_dl_policy = dl_policy.attribute(
-                input_data, baselines=input_data * 0, target=action_taken
+            # Define forward function for policy network
+            def forward_func_policy(input_data_flat):
+                # Reshape back to original shape
+                input_data = input_data_flat.reshape(1, num_channels, height, width)
+                x = input_data
+                x = policy_net.forward(x)
+                x_mask = policy_net.policy_mask[state_tensor]
+                x = x.masked_fill((1 - x_mask).bool(), -1e32)
+                action_probs = torch.softmax(x, dim=1)
+                return action_probs
+
+            # Flatten the input data using reshape
+            input_data_flat = input_data.reshape(1, -1)
+
+            # Use LIME for policy network
+            lime_policy = Lime(forward_func_policy)
+            attributions_lime_policy = lime_policy.attribute(
+                input_data_flat,
+                target=action_taken,
+                n_samples=1000,  # Adjust based on computational resources
+                feature_mask=None
             )
-            attributions_ig_policy_np = attributions_dl_policy.squeeze().cpu().detach().numpy()
+            # Reshape attributions back to original shape
+            attributions_policy_np = attributions_lime_policy.reshape(num_channels, height, width).cpu().detach().numpy()
 
             # Aggregate attributions for policy network (Preserving sign)
-            channel_importance_policy = np.sum(attributions_ig_policy_np, axis=(1, 2))
+            channel_importance_policy = np.sum(attributions_policy_np, axis=(1, 2))
 
             # Append to aggregated importance
             aggregated_importance_policy[key].append(channel_importance_policy)
@@ -321,37 +281,85 @@ def interpret_model():
 
             # Save DataFrame to CSV
             feature_importance_policy_df.to_csv(
-                os.path.join(output_csv_dir, f'trajectory_{idx+1}_{key}_policy_dl_feature_importance.csv'), index=False
+                os.path.join(output_csv_dir, f'trajectory_{idx+1}_{key}_policy_lime_feature_importance.csv'), index=False
             )
 
             # Prepare action tensor
             act_tensor = torch.tensor([action_taken], dtype=torch.long).to(device)
             act_one_hot = F.one_hot(act_tensor, num_classes=discriminator_net.action_num).float()
-            act_one_hot.requires_grad = True
 
             # Process features for discriminator
             input_data_disc = discriminator_net.process_neigh_features(state_tensor, des_tensor)
             input_data_disc.requires_grad = True
 
-            # Create an instance of the wrapped discriminator module
-            wrapped_discriminator_net = WrappedDiscriminatorNet(
-                discriminator_net, state_tensor, des_tensor, next_state_tensor
-            )
-            wrapped_discriminator_net.to(device)
+            # Infer shape for discriminator network
+            num_channels_disc, height_disc, width_disc = input_data_disc.shape[1], input_data_disc.shape[2], input_data_disc.shape[3]
 
-            dl_disc = DeepLift(wrapped_discriminator_net)
-            baseline_input_data_disc = input_data_disc * 0
-            baseline_act_one_hot = act_one_hot * 0
-            attributions_dl_disc = dl_disc.attribute(
-                (input_data_disc, act_one_hot),
-                baselines=(baseline_input_data_disc, baseline_act_one_hot)
+            # Define forward function for discriminator network
+            def forward_func_discriminator(combined_input_flat):
+                # Split the combined input into input_data_disc_flat and x_act
+                input_size_disc = num_channels_disc * height_disc * width_disc
+                input_data_disc_flat = combined_input_flat[:, :input_size_disc]
+                x_act = combined_input_flat[:, input_size_disc:]
+                # Reshape back to original shape
+                input_data_disc = input_data_disc_flat.reshape(-1, num_channels_disc, height_disc, width_disc)
+                # Discriminator computations
+                x = input_data_disc
+                x = discriminator_net.pool(F.leaky_relu(discriminator_net.conv1(x), 0.2))
+                x = F.leaky_relu(discriminator_net.conv2(x), 0.2)
+                x = x.view(-1, 30)  # x shape: [batch_size, 30]
+
+                # x_act is act_one_hot
+                if x_act.dim() == 1:
+                    x_act = x_act.unsqueeze(0)  # x_act shape: [1, num_classes]
+
+                # Concatenate x and x_act
+                x = torch.cat([x, x_act], 1)  # x shape: [batch_size, 30 + num_classes]
+
+                x = F.leaky_relu(discriminator_net.fc1(x), 0.2)
+                x = F.leaky_relu(discriminator_net.fc2(x), 0.2)
+                rs = discriminator_net.fc3(x)
+
+                # Compute hs and hs_next
+                x_state = discriminator_net.process_state_features(state_tensor, des_tensor)
+                x_state = F.leaky_relu(discriminator_net.h_fc1(x_state), 0.2)
+                x_state = F.leaky_relu(discriminator_net.h_fc2(x_state), 0.2)
+                x_state = discriminator_net.h_fc3(x_state)
+
+                next_x_state = discriminator_net.process_state_features(next_state_tensor, des_tensor)
+                next_x_state = F.leaky_relu(discriminator_net.h_fc1(next_x_state), 0.2)
+                next_x_state = F.leaky_relu(discriminator_net.h_fc2(next_x_state), 0.2)
+                next_x_state = discriminator_net.h_fc3(next_x_state)
+
+                f = rs + discriminator_net.gamma * next_x_state - x_state
+                f = f.squeeze(-1)  # Ensure f is of shape [batch_size]
+                return f
+
+            # Flatten the discriminator input data using reshape
+            input_data_disc_flat = input_data_disc.reshape(1, -1)
+
+            # Concatenate input_data_disc_flat and act_one_hot for LIME
+            combined_input_disc_flat = torch.cat((input_data_disc_flat, act_one_hot), dim=1)
+
+            # Use LIME for discriminator network
+            lime_disc = Lime(forward_func_discriminator)
+            attributions_lime_disc = lime_disc.attribute(
+                combined_input_disc_flat,
+                target=None,  # Assuming the discriminator output is scalar
+                n_samples=1000,  # Adjust based on computational resources
+                feature_mask=None
             )
-            attributions_input = attributions_dl_disc[0].squeeze().cpu().detach().numpy()
-            attributions_action = attributions_dl_disc[1].squeeze().cpu().detach().numpy()
+            # Split the attributions back into input features and action features
+            input_attributions_flat = attributions_lime_disc[:, :num_channels_disc * height_disc * width_disc]
+            action_attributions_flat = attributions_lime_disc[:, num_channels_disc * height_disc * width_disc:]
+
+            # Reshape attributions back to original shapes
+            attributions_input_np = input_attributions_flat.reshape(num_channels_disc, height_disc, width_disc).cpu().detach().numpy()
+            attributions_action_np = action_attributions_flat.cpu().detach().numpy().squeeze()
 
             # Aggregate attributions
-            channel_importance_input = np.sum(attributions_input, axis=(1, 2))
-            channel_importance_action = attributions_action  # Already a vector
+            channel_importance_input = np.sum(attributions_input_np, axis=(1, 2))
+            channel_importance_action = attributions_action_np  # Already a vector
 
             # Combine input feature attributions and action attributions
             combined_importance = np.concatenate([channel_importance_input, channel_importance_action])
@@ -372,7 +380,7 @@ def interpret_model():
 
             # Save DataFrame to CSV
             feature_importance_disc_df.to_csv(
-                os.path.join(output_csv_dir, f'trajectory_{idx+1}_{key}_discriminator_dl_feature_importance.csv'),
+                os.path.join(output_csv_dir, f'trajectory_{idx+1}_{key}_discriminator_lime_feature_importance.csv'),
                 index=False
             )
 
@@ -410,14 +418,14 @@ def interpret_model():
             axes[0].barh(sorted_features_policy, sorted_importance_policy,
                          color=['green' if v >= 0 else 'red' for v in sorted_importance_policy])
             axes[0].set_xlabel('Importance Score')
-            axes[0].set_title('Policy Network DeepLift Feature Importance')
+            axes[0].set_title('Policy Network LIME Feature Importance')
             axes[0].invert_yaxis()  # Highest importance at the top
 
             # Plot Discriminator Network Feature Importance
             axes[1].barh(sorted_features_disc, sorted_importance_disc,
                          color=['green' if v >= 0 else 'red' for v in sorted_importance_disc])
             axes[1].set_xlabel('Importance Score')
-            axes[1].set_title('Discriminator DeepLift Feature Importance')
+            axes[1].set_title('Discriminator LIME Feature Importance')
             axes[1].invert_yaxis()  # Highest importance at the top
 
             # Set the overall title
@@ -450,7 +458,7 @@ def interpret_model():
 
             # Save DataFrame to CSV
             feature_importance_policy_df.to_csv(
-                os.path.join(output_csv_dir, f'aggregated_{key}_policy_dl_feature_importance.csv'), index=False
+                os.path.join(output_csv_dir, f'aggregated_{key}_policy_lime_feature_importance.csv'), index=False
             )
 
             # Now process the discriminator aggregated importance
@@ -471,7 +479,7 @@ def interpret_model():
 
             # Save DataFrame to CSV
             feature_importance_disc_df.to_csv(
-                os.path.join(output_csv_dir, f'aggregated_{key}_discriminator_dl_feature_importance.csv'),
+                os.path.join(output_csv_dir, f'aggregated_{key}_discriminator_lime_feature_importance.csv'),
                 index=False
             )
 
@@ -505,14 +513,14 @@ def interpret_model():
             axes[0].barh(sorted_features_policy, sorted_importance_policy,
                          color=['green' if v >= 0 else 'red' for v in sorted_importance_policy])
             axes[0].set_xlabel('Mean Importance Score')
-            axes[0].set_title('Aggregated Policy Network DeepLift Feature Importance')
+            axes[0].set_title('Aggregated Policy Network LIME Feature Importance')
             axes[0].invert_yaxis()  # Highest importance at the top
 
             # Plot Discriminator Network Mean Feature Importance
             axes[1].barh(sorted_features_disc, sorted_importance_disc,
                          color=['green' if v >= 0 else 'red' for v in sorted_importance_disc])
             axes[1].set_xlabel('Mean Importance Score')
-            axes[1].set_title('Aggregated Discriminator DeepLift Feature Importance')
+            axes[1].set_title('Aggregated Discriminator LIME Feature Importance')
             axes[1].invert_yaxis()  # Highest importance at the top
 
             # Set the overall title

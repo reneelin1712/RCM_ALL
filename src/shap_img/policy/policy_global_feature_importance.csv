@@ -1,0 +1,21 @@
+Feature,Mean SHAP Value
+Neighbor mask,-0.024869152731283733
+Highway type: residential,-0.02664626281027473
+Highway type: living_street,-0.02845688430482238
+Highway type: primary,-0.02847032717156295
+Number of living_street roads,-0.02949167446409645
+Mask feature,-0.02951900536607681
+Number of primary roads,-0.030313080682716962
+Number of secondary roads,-0.03109572539503122
+Highway type: unclassified,-0.03225863009137558
+Highway type: secondary,-0.03313854578363246
+Number of U-turns,-0.03423964926955807
+Number of residential roads,-0.034586341983386504
+Number of left turns,-0.03532836613283257
+Number of unclassified roads,-0.035700407388093186
+Number of tertiary roads,-0.03593027810456588
+Edge length,-0.03651432686086152
+Number of right turns,-0.038579805403121545
+Number of links,-0.038670661638343276
+Highway type: tertiary,-0.03988168825535284
+Total length,-0.04023150487620879

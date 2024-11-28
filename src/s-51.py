@@ -243,7 +243,7 @@ def interpret_model():
     # Visualize SHAP values for policy network
     shap.summary_plot(policy_shap_values_per_feature, policy_test_samples_per_feature, feature_names=feature_names_channels, show=False)
     # Save the SHAP summary plot
-    plt.savefig('shap_img/discriminator_shap_summary_plot.png', bbox_inches='tight')
+    plt.savefig('shap_img/policy_shap_summary_plot.png', bbox_inches='tight')
     plt.close()
 
     # Optionally, aggregate SHAP values over samples for global importance
@@ -380,7 +380,7 @@ def interpret_model():
     # Visualize SHAP values for discriminator network
     shap.summary_plot(discriminator_shap_values_per_feature, discriminator_test_samples_per_feature, feature_names=feature_names_channels,show=False)
     # Save the SHAP summary plot for the policy network
-    plt.savefig('shap_img/policy_shap_summary_plot.png', bbox_inches='tight')
+    plt.savefig('shap_img/discriminator_shap_summary_plot.png', bbox_inches='tight')
     plt.close()
 
     # Optionally, aggregate SHAP values over samples for global importance
